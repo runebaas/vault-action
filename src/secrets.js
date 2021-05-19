@@ -1,5 +1,5 @@
 const jsonata = require("jsonata");
-
+const core = require('@actions/core');
 
 /**
  * @typedef {Object} SecretRequest
@@ -34,7 +34,12 @@ async function getSecrets(secretRequests, client) {
             body = responseCache.get(requestPath);
             cachedResponse = true;
         } else {
-            const result = await client.get(requestPath);
+            let result
+            try{
+                result = await client.get(requestPath);
+            } catch (e) {
+                core.debug(`Failed to get Secret - ${e}`,);
+            }
             body = result.body;
             responseCache.set(requestPath, body);
         }
@@ -59,8 +64,8 @@ async function getSecrets(secretRequests, client) {
 
 /**
  * Uses a Jsonata selector retrieve a bit of data from the result
- * @param {object} data 
- * @param {string} selector 
+ * @param {object} data
+ * @param {string} selector
  */
 function selectData(data, selector) {
     const ata = jsonata(selector);

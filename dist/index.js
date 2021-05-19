@@ -74,6 +74,7 @@ var eos = function(stream, opts, callback) {
 	var rs = stream._readableState;
 	var readable = opts.readable || (opts.readable !== false && stream.readable);
 	var writable = opts.writable || (opts.writable !== false && stream.writable);
+	var cancelled = false;
 
 	var onlegacyfinish = function() {
 		if (!stream.writable) onfinish();
@@ -98,8 +99,13 @@ var eos = function(stream, opts, callback) {
 	};
 
 	var onclose = function() {
-		if (readable && !(rs && rs.ended)) return callback.call(stream, new Error('premature close'));
-		if (writable && !(ws && ws.ended)) return callback.call(stream, new Error('premature close'));
+		process.nextTick(onclosenexttick);
+	};
+
+	var onclosenexttick = function() {
+		if (cancelled) return;
+		if (readable && !(rs && (rs.ended && !rs.destroyed))) return callback.call(stream, new Error('premature close'));
+		if (writable && !(ws && (ws.ended && !ws.destroyed))) return callback.call(stream, new Error('premature close'));
 	};
 
 	var onrequest = function() {
@@ -124,6 +130,7 @@ var eos = function(stream, opts, callback) {
 	stream.on('close', onclose);
 
 	return function() {
+		cancelled = true;
 		stream.removeListener('complete', onfinish);
 		stream.removeListener('abort', onclose);
 		stream.removeListener('request', onrequest);
@@ -216,70 +223,9 @@ function wrappy (fn, cb) {
 /***/ }),
 
 /***/ 16:
-/***/ (function(module, __unusedexports, __webpack_require__) {
+/***/ (function(module) {
 
-"use strict";
-
-const {constants: BufferConstants} = __webpack_require__(293);
-const pump = __webpack_require__(453);
-const bufferStream = __webpack_require__(375);
-
-class MaxBufferError extends Error {
-	constructor() {
-		super('maxBuffer exceeded');
-		this.name = 'MaxBufferError';
-	}
-}
-
-async function getStream(inputStream, options) {
-	if (!inputStream) {
-		return Promise.reject(new Error('Expected a stream'));
-	}
-
-	options = {
-		maxBuffer: Infinity,
-		...options
-	};
-
-	const {maxBuffer} = options;
-
-	let stream;
-	await new Promise((resolve, reject) => {
-		const rejectPromise = error => {
-			// Don't retrieve an oversized buffer.
-			if (error && stream.getBufferedLength() <= BufferConstants.MAX_LENGTH) {
-				error.bufferedData = stream.getBufferedValue();
-			}
-
-			reject(error);
-		};
-
-		stream = pump(inputStream, bufferStream(options), error => {
-			if (error) {
-				rejectPromise(error);
-				return;
-			}
-
-			resolve();
-		});
-
-		stream.on('data', () => {
-			if (stream.getBufferedLength() > maxBuffer) {
-				rejectPromise(new MaxBufferError());
-			}
-		});
-	});
-
-	return stream.getBufferedValue();
-}
-
-module.exports = getStream;
-// TODO: Remove this for the next major release
-module.exports.default = getStream;
-module.exports.buffer = (stream, options) => getStream(stream, {...options, encoding: 'buffer'});
-module.exports.array = (stream, options) => getStream(stream, {...options, array: true});
-module.exports.MaxBufferError = MaxBufferError;
-
+module.exports = require("tls");
 
 /***/ }),
 
@@ -828,32 +774,77 @@ module.exports = require("os");
 // We define these manually to ensure they're always copied
 // even if they would move up the prototype chain
 // https://nodejs.org/api/http.html#http_class_http_incomingmessage
-const knownProps = [
-	'destroy',
-	'setTimeout',
-	'socket',
+const knownProperties = [
+	'aborted',
+	'complete',
 	'headers',
-	'trailers',
-	'rawHeaders',
-	'statusCode',
 	'httpVersion',
 	'httpVersionMinor',
 	'httpVersionMajor',
+	'method',
+	'rawHeaders',
 	'rawTrailers',
-	'statusMessage'
+	'setTimeout',
+	'socket',
+	'statusCode',
+	'statusMessage',
+	'trailers',
+	'url'
 ];
 
 module.exports = (fromStream, toStream) => {
-	const fromProps = new Set(Object.keys(fromStream).concat(knownProps));
+	if (toStream._readableState.autoDestroy) {
+		throw new Error('The second stream must have the `autoDestroy` option set to `false`');
+	}
 
-	for (const prop of fromProps) {
-		// Don't overwrite existing properties
-		if (prop in toStream) {
+	const fromProperties = new Set(Object.keys(fromStream).concat(knownProperties));
+
+	const properties = {};
+
+	for (const property of fromProperties) {
+		// Don't overwrite existing properties.
+		if (property in toStream) {
 			continue;
 		}
 
-		toStream[prop] = typeof fromStream[prop] === 'function' ? fromStream[prop].bind(fromStream) : fromStream[prop];
+		properties[property] = {
+			get() {
+				const value = fromStream[property];
+				const isFunction = typeof value === 'function';
+
+				return isFunction ? value.bind(fromStream) : value;
+			},
+			set(value) {
+				fromStream[property] = value;
+			},
+			enumerable: true,
+			configurable: false
+		};
 	}
+
+	Object.defineProperties(toStream, properties);
+
+	fromStream.once('aborted', () => {
+		toStream.destroy();
+
+		toStream.emit('aborted');
+	});
+
+	fromStream.once('close', () => {
+		if (fromStream.complete) {
+			if (toStream.readable) {
+				toStream.once('end', () => {
+					toStream.emit('close');
+				});
+			} else {
+				toStream.emit('close');
+			}
+		} else {
+			toStream.emit('close');
+		}
+	});
+
+	return toStream;
 };
 
 
@@ -966,6 +957,74 @@ const parseBody = (response, responseType, parseJson, encoding) => {
     }
 };
 exports.default = parseBody;
+
+
+/***/ }),
+
+/***/ 145:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const {constants: BufferConstants} = __webpack_require__(293);
+const pump = __webpack_require__(453);
+const bufferStream = __webpack_require__(966);
+
+class MaxBufferError extends Error {
+	constructor() {
+		super('maxBuffer exceeded');
+		this.name = 'MaxBufferError';
+	}
+}
+
+async function getStream(inputStream, options) {
+	if (!inputStream) {
+		return Promise.reject(new Error('Expected a stream'));
+	}
+
+	options = {
+		maxBuffer: Infinity,
+		...options
+	};
+
+	const {maxBuffer} = options;
+
+	let stream;
+	await new Promise((resolve, reject) => {
+		const rejectPromise = error => {
+			// Don't retrieve an oversized buffer.
+			if (error && stream.getBufferedLength() <= BufferConstants.MAX_LENGTH) {
+				error.bufferedData = stream.getBufferedValue();
+			}
+
+			reject(error);
+		};
+
+		stream = pump(inputStream, bufferStream(options), error => {
+			if (error) {
+				rejectPromise(error);
+				return;
+			}
+
+			resolve();
+		});
+
+		stream.on('data', () => {
+			if (stream.getBufferedLength() > maxBuffer) {
+				rejectPromise(new MaxBufferError());
+			}
+		});
+	});
+
+	return stream.getBufferedValue();
+}
+
+module.exports = getStream;
+// TODO: Remove this for the next major release
+module.exports.default = getStream;
+module.exports.buffer = (stream, options) => getStream(stream, {...options, encoding: 'buffer'});
+module.exports.array = (stream, options) => getStream(stream, {...options, array: true});
+module.exports.MaxBufferError = MaxBufferError;
 
 
 /***/ }),
@@ -2350,6 +2409,46 @@ exports.parse = function (s) {
 
 /***/ }),
 
+/***/ 210:
+/***/ (function(module) {
+
+"use strict";
+
+
+// We define these manually to ensure they're always copied
+// even if they would move up the prototype chain
+// https://nodejs.org/api/http.html#http_class_http_incomingmessage
+const knownProps = [
+	'destroy',
+	'setTimeout',
+	'socket',
+	'headers',
+	'trailers',
+	'rawHeaders',
+	'statusCode',
+	'httpVersion',
+	'httpVersionMinor',
+	'httpVersionMajor',
+	'rawTrailers',
+	'statusMessage'
+];
+
+module.exports = (fromStream, toStream) => {
+	const fromProps = new Set(Object.keys(fromStream).concat(knownProps));
+
+	for (const prop of fromProps) {
+		// Don't overwrite existing properties
+		if (prop in toStream) {
+			continue;
+		}
+
+		toStream[prop] = typeof fromStream[prop] === 'function' ? fromStream[prop].bind(fromStream) : fromStream[prop];
+	}
+};
+
+
+/***/ }),
+
 /***/ 211:
 /***/ (function(module) {
 
@@ -2368,6 +2467,137 @@ module.exports = (from, to, events) => {
 		from.on(event, (...args) => to.emit(event, ...args));
 	}
 };
+
+
+/***/ }),
+
+/***/ 290:
+/***/ (function(module) {
+
+"use strict";
+
+
+class QuickLRU {
+	constructor(options = {}) {
+		if (!(options.maxSize && options.maxSize > 0)) {
+			throw new TypeError('`maxSize` must be a number greater than 0');
+		}
+
+		this.maxSize = options.maxSize;
+		this.onEviction = options.onEviction;
+		this.cache = new Map();
+		this.oldCache = new Map();
+		this._size = 0;
+	}
+
+	_set(key, value) {
+		this.cache.set(key, value);
+		this._size++;
+
+		if (this._size >= this.maxSize) {
+			this._size = 0;
+
+			if (typeof this.onEviction === 'function') {
+				for (const [key, value] of this.oldCache.entries()) {
+					this.onEviction(key, value);
+				}
+			}
+
+			this.oldCache = this.cache;
+			this.cache = new Map();
+		}
+	}
+
+	get(key) {
+		if (this.cache.has(key)) {
+			return this.cache.get(key);
+		}
+
+		if (this.oldCache.has(key)) {
+			const value = this.oldCache.get(key);
+			this.oldCache.delete(key);
+			this._set(key, value);
+			return value;
+		}
+	}
+
+	set(key, value) {
+		if (this.cache.has(key)) {
+			this.cache.set(key, value);
+		} else {
+			this._set(key, value);
+		}
+
+		return this;
+	}
+
+	has(key) {
+		return this.cache.has(key) || this.oldCache.has(key);
+	}
+
+	peek(key) {
+		if (this.cache.has(key)) {
+			return this.cache.get(key);
+		}
+
+		if (this.oldCache.has(key)) {
+			return this.oldCache.get(key);
+		}
+	}
+
+	delete(key) {
+		const deleted = this.cache.delete(key);
+		if (deleted) {
+			this._size--;
+		}
+
+		return this.oldCache.delete(key) || deleted;
+	}
+
+	clear() {
+		this.cache.clear();
+		this.oldCache.clear();
+		this._size = 0;
+	}
+
+	* keys() {
+		for (const [key] of this) {
+			yield key;
+		}
+	}
+
+	* values() {
+		for (const [, value] of this) {
+			yield value;
+		}
+	}
+
+	* [Symbol.iterator]() {
+		for (const item of this.cache) {
+			yield item;
+		}
+
+		for (const item of this.oldCache) {
+			const [key] = item;
+			if (!this.cache.has(key)) {
+				yield item;
+			}
+		}
+	}
+
+	get size() {
+		let oldCacheSize = 0;
+		for (const key of this.oldCache.keys()) {
+			if (!this.cache.has(key)) {
+				oldCacheSize++;
+			}
+		}
+
+		return Math.min(this._size + oldCacheSize, this.maxSize);
+	}
+}
+
+module.exports = QuickLRU;
 
 
 /***/ }),
@@ -2773,7 +3003,7 @@ __exportStar(__webpack_require__(839), exports);
 
 
 const PassThrough = __webpack_require__(413).PassThrough;
-const mimicResponse = __webpack_require__(89);
+const mimicResponse = __webpack_require__(210);
 
 const cloneResponse = response => {
 	if (!(response && response.pipe)) {
@@ -10282,66 +10512,6 @@ module.exports = utils;
 
 /***/ }),
 
-/***/ 375:
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-const {PassThrough: PassThroughStream} = __webpack_require__(413);
-
-module.exports = options => {
-	options = {...options};
-
-	const {array} = options;
-	let {encoding} = options;
-	const isBuffer = encoding === 'buffer';
-	let objectMode = false;
-
-	if (array) {
-		objectMode = !(encoding || isBuffer);
-	} else {
-		encoding = encoding || 'utf8';
-	}
-
-	if (isBuffer) {
-		encoding = null;
-	}
-
-	const stream = new PassThroughStream({objectMode});
-
-	if (encoding) {
-		stream.setEncoding(encoding);
-	}
-
-	let length = 0;
-	const chunks = [];
-
-	stream.on('data', chunk => {
-		chunks.push(chunk);
-
-		if (objectMode) {
-			length = chunks.length;
-		} else {
-			length += chunk.length;
-		}
-	});
-
-	stream.getBufferedValue = () => {
-		if (array) {
-			return chunks;
-		}
-
-		return isBuffer ? Buffer.concat(chunks, length) : chunks.join('');
-	};
-
-	stream.getBufferedLength = () => length;
-
-	return stream;
-};
-
-
-/***/ }),
-
 /***/ 390:
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -10351,7 +10521,7 @@ module.exports = options => {
 const EventEmitter = __webpack_require__(614);
 const urlLib = __webpack_require__(835);
 const normalizeUrl = __webpack_require__(53);
-const getStream = __webpack_require__(16);
+const getStream = __webpack_require__(145);
 const CachePolicy = __webpack_require__(154);
 const Response = __webpack_require__(93);
 const lowercaseKeys = __webpack_require__(474);
@@ -10839,7 +11009,7 @@ exports.default = (body) => is_1.default.nodeStream(body) && is_1.default.functi
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
 const jsonata = __webpack_require__(350);
-
+const core = __webpack_require__(470);
 
 /**
  * @typedef {Object} SecretRequest
@@ -10874,7 +11044,12 @@ async function getSecrets(secretRequests, client) {
             body = responseCache.get(requestPath);
             cachedResponse = true;
         } else {
-            const result = await client.get(requestPath);
+            let result
+            try{
+                result = await client.get(requestPath);
+            } catch (e) {
+                core.debug(`Failed to get Secret - ${e}`,);
+            }
             body = result.body;
             responseCache.set(requestPath, body);
         }
@@ -10899,8 +11074,8 @@ async function getSecrets(secretRequests, client) {
 
 /**
  * Uses a Jsonata selector retrieve a bit of data from the result
- * @param {object} data 
- * @param {string} selector 
+ * @param {object} data
+ * @param {string} selector
  */
 function selectData(data, selector) {
     const ata = jsonata(selector);
@@ -10922,6 +11097,7 @@ module.exports = {
     getSecrets,
     selectData
 }
+
 
 /***/ }),
 
@@ -11369,20 +11545,37 @@ module.exports = url => {
 
 "use strict";
 
-const tls = __webpack_require__(818);
+const tls = __webpack_require__(16);
 
 module.exports = (options = {}) => new Promise((resolve, reject) => {
-	const socket = tls.connect(options, () => {
+	let timeout = false;
+
+	const callback = async () => {
+		socket.off('timeout', onTimeout);
+		socket.off('error', reject);
+
 		if (options.resolveSocket) {
-			socket.off('error', reject);
-			resolve({alpnProtocol: socket.alpnProtocol, socket});
+			resolve({alpnProtocol: socket.alpnProtocol, socket, timeout});
+
+			if (timeout) {
+				await Promise.resolve();
+				socket.emit('timeout');
+			}
 		} else {
 			socket.destroy();
-			resolve({alpnProtocol: socket.alpnProtocol});
+			resolve({alpnProtocol: socket.alpnProtocol, timeout});
 		}
-	});
+	};
+
+	const onTimeout = async () => {
+		timeout = true;
+		callback();
+	};
+
+	const socket = tls.connect(options, callback);
 
 	socket.on('error', reject);
+	socket.once('timeout', onTimeout);
 });
 
 
@@ -11594,7 +11787,7 @@ is.primitive = (value) => is.null_(value) || isPrimitiveTypeName(typeof value);
 is.integer = (value) => Number.isInteger(value);
 is.safeInteger = (value) => Number.isSafeInteger(value);
 is.plainObject = (value) => {
-    // From: https://github.com/sindresorhus/is-plain-obj/blob/master/index.js
+    // From: https://github.com/sindresorhus/is-plain-obj/blob/main/index.js
     if (toString.call(value) !== '[object Object]') {
         return false;
     }
@@ -11676,9 +11869,15 @@ is.any = (predicate, ...values) => {
     return predicates.some(singlePredicate => predicateOnArray(Array.prototype.some, singlePredicate, values));
 };
 is.all = (predicate, ...values) => predicateOnArray(Array.prototype.every, predicate, values);
-const assertType = (condition, description, value) => {
+const assertType = (condition, description, value, options = {}) => {
     if (!condition) {
-        throw new TypeError(`Expected value which is \`${description}\`, received value of type \`${is(value)}\`.`);
+        const { multipleValues } = options;
+        const valuesMessage = multipleValues ?
+            `received values of types ${[
+                ...new Set(value.map(singleValue => `\`${is(singleValue)}\``))
+            ].join(', ')}` :
+            `received value of type \`${is(value)}\``;
+        throw new TypeError(`Expected value which is \`${description}\`, ${valuesMessage}.`);
     }
 };
 exports.assert = {
@@ -11770,8 +11969,10 @@ exports.assert = {
     directInstanceOf: (instance, class_) => assertType(is.directInstanceOf(instance, class_), "T" /* directInstanceOf */, instance),
     inRange: (value, range) => assertType(is.inRange(value, range), "in range" /* inRange */, value),
     // Variadic functions.
-    any: (predicate, ...values) => assertType(is.any(predicate, ...values), "predicate returns truthy for any value" /* any */, values),
-    all: (predicate, ...values) => assertType(is.all(predicate, ...values), "predicate returns truthy for all values" /* all */, values)
+    any: (predicate, ...values) => {
+        return assertType(is.any(predicate, ...values), "predicate returns truthy for any value" /* any */, values, { multipleValues: true });
+    },
+    all: (predicate, ...values) => assertType(is.all(predicate, ...values), "predicate returns truthy for all values" /* all */, values, { multipleValues: true })
 };
 // Some few keywords are reserved, but we'll populate them for Node.js users
 // See https://github.com/Microsoft/TypeScript/issues/2536
@@ -11802,91 +12003,6 @@ exports.default = is;
 module.exports = is;
 module.exports.default = is;
 module.exports.assert = exports.assert;
-
-
-/***/ }),
-
-/***/ 537:
-/***/ (function(module) {
-
-"use strict";
-
-
-// We define these manually to ensure they're always copied
-// even if they would move up the prototype chain
-// https://nodejs.org/api/http.html#http_class_http_incomingmessage
-const knownProperties = [
-	'aborted',
-	'complete',
-	'headers',
-	'httpVersion',
-	'httpVersionMinor',
-	'httpVersionMajor',
-	'method',
-	'rawHeaders',
-	'rawTrailers',
-	'setTimeout',
-	'socket',
-	'statusCode',
-	'statusMessage',
-	'trailers',
-	'url'
-];
-
-module.exports = (fromStream, toStream) => {
-	if (toStream._readableState.autoDestroy) {
-		throw new Error('The second stream must have the `autoDestroy` option set to `false`');
-	}
-
-	const fromProperties = new Set(Object.keys(fromStream).concat(knownProperties));
-
-	const properties = {};
-
-	for (const property of fromProperties) {
-		// Don't overwrite existing properties.
-		if (property in toStream) {
-			continue;
-		}
-
-		properties[property] = {
-			get() {
-				const value = fromStream[property];
-				const isFunction = typeof value === 'function';
-
-				return isFunction ? value.bind(fromStream) : value;
-			},
-			set(value) {
-				fromStream[property] = value;
-			},
-			enumerable: true,
-			configurable: false
-		};
-	}
-
-	Object.defineProperties(toStream, properties);
-
-	fromStream.once('aborted', () => {
-		toStream.destroy();
-
-		toStream.emit('aborted');
-	});
-
-	fromStream.once('close', () => {
-		if (fromStream.complete) {
-			if (toStream.readable) {
-				toStream.once('end', () => {
-					toStream.emit('close');
-				});
-			} else {
-				toStream.emit('close');
-			}
-		} else {
-			toStream.emit('close');
-		}
-	});
-
-	return toStream;
-};
 
 
 /***/ }),
@@ -11929,8 +12045,10 @@ class PCancelable {
 			this._reject = reject;
 
 			const onResolve = value => {
-				this._isPending = false;
-				resolve(value);
+				if (!this._isCanceled || !onCancel.shouldReject) {
+					this._isPending = false;
+					resolve(value);
+				}
 			};
 
 			const onReject = error => {
@@ -11977,6 +12095,8 @@ class PCancelable {
 			return;
 		}
 
+		this._isCanceled = true;
+
 		if (this._cancelHandlers.length > 0) {
 			try {
 				for (const handler of this._cancelHandlers) {
@@ -11984,10 +12104,10 @@ class PCancelable {
 				}
 			} catch (error) {
 				this._reject(error);
+				return;
 			}
 		}
 
-		this._isCanceled = true;
 		if (this._rejectOnCancel) {
 			this._reject(new CancelError(reason));
 		}
@@ -13562,13 +13682,6 @@ exports.default = (request, delays, options) => {
 
 /***/ }),
 
-/***/ 818:
-/***/ (function(module) {
-
-module.exports = require("tls");
-
-/***/ }),
-
 /***/ 835:
 /***/ (function(module) {
 
@@ -13593,7 +13706,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 
 const {Transform, PassThrough} = __webpack_require__(413);
 const zlib = __webpack_require__(761);
-const mimicResponse = __webpack_require__(537);
+const mimicResponse = __webpack_require__(89);
 
 module.exports = response => {
 	const contentEncoding = (response.headers['content-encoding'] || '').toLowerCase();
@@ -13665,9 +13778,9 @@ module.exports = require("dns");
 "use strict";
 
 const EventEmitter = __webpack_require__(614);
-const tls = __webpack_require__(818);
+const tls = __webpack_require__(16);
 const http2 = __webpack_require__(565);
-const QuickLRU = __webpack_require__(904);
+const QuickLRU = __webpack_require__(290);
 
 const kCurrentStreamsCount = Symbol('currentStreamsCount');
 const kRequest = Symbol('request');
@@ -14333,137 +14446,6 @@ module.exports = {
 	Agent,
 	globalAgent: new Agent()
 };
-
-
-/***/ }),
-
-/***/ 904:
-/***/ (function(module) {
-
-"use strict";
-
-
-class QuickLRU {
-	constructor(options = {}) {
-		if (!(options.maxSize && options.maxSize > 0)) {
-			throw new TypeError('`maxSize` must be a number greater than 0');
-		}
-
-		this.maxSize = options.maxSize;
-		this.onEviction = options.onEviction;
-		this.cache = new Map();
-		this.oldCache = new Map();
-		this._size = 0;
-	}
-
-	_set(key, value) {
-		this.cache.set(key, value);
-		this._size++;
-
-		if (this._size >= this.maxSize) {
-			this._size = 0;
-
-			if (typeof this.onEviction === 'function') {
-				for (const [key, value] of this.oldCache.entries()) {
-					this.onEviction(key, value);
-				}
-			}
-
-			this.oldCache = this.cache;
-			this.cache = new Map();
-		}
-	}
-
-	get(key) {
-		if (this.cache.has(key)) {
-			return this.cache.get(key);
-		}
-
-		if (this.oldCache.has(key)) {
-			const value = this.oldCache.get(key);
-			this.oldCache.delete(key);
-			this._set(key, value);
-			return value;
-		}
-	}
-
-	set(key, value) {
-		if (this.cache.has(key)) {
-			this.cache.set(key, value);
-		} else {
-			this._set(key, value);
-		}
-
-		return this;
-	}
-
-	has(key) {
-		return this.cache.has(key) || this.oldCache.has(key);
-	}
-
-	peek(key) {
-		if (this.cache.has(key)) {
-			return this.cache.get(key);
-		}
-
-		if (this.oldCache.has(key)) {
-			return this.oldCache.get(key);
-		}
-	}
-
-	delete(key) {
-		const deleted = this.cache.delete(key);
-		if (deleted) {
-			this._size--;
-		}
-
-		return this.oldCache.delete(key) || deleted;
-	}
-
-	clear() {
-		this.cache.clear();
-		this.oldCache.clear();
-		this._size = 0;
-	}
-
-	* keys() {
-		for (const [key] of this) {
-			yield key;
-		}
-	}
-
-	* values() {
-		for (const [, value] of this) {
-			yield value;
-		}
-	}
-
-	* [Symbol.iterator]() {
-		for (const item of this.cache) {
-			yield item;
-		}
-
-		for (const item of this.oldCache) {
-			const [key] = item;
-			if (!this.cache.has(key)) {
-				yield item;
-			}
-		}
-	}
-
-	get size() {
-		let oldCacheSize = 0;
-		for (const key of this.oldCache.keys()) {
-			if (!this.cache.has(key)) {
-				oldCacheSize++;
-			}
-		}
-
-		return Math.min(this._size + oldCacheSize, this.maxSize);
-	}
-}
-
-module.exports = QuickLRU;
 
 
 /***/ }),
@@ -16280,6 +16262,66 @@ exports.default = Request;
 
 /***/ }),
 
+/***/ 966:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const {PassThrough: PassThroughStream} = __webpack_require__(413);
+
+module.exports = options => {
+	options = {...options};
+
+	const {array} = options;
+	let {encoding} = options;
+	const isBuffer = encoding === 'buffer';
+	let objectMode = false;
+
+	if (array) {
+		objectMode = !(encoding || isBuffer);
+	} else {
+		encoding = encoding || 'utf8';
+	}
+
+	if (isBuffer) {
+		encoding = null;
+	}
+
+	const stream = new PassThroughStream({objectMode});
+
+	if (encoding) {
+		stream.setEncoding(encoding);
+	}
+
+	let length = 0;
+	const chunks = [];
+
+	stream.on('data', chunk => {
+		chunks.push(chunk);
+
+		if (objectMode) {
+			length = chunks.length;
+		} else {
+			length += chunk.length;
+		}
+	});
+
+	stream.getBufferedValue = () => {
+		if (array) {
+			return chunks;
+		}
+
+		return isBuffer ? Buffer.concat(chunks, length) : chunks.join('');
+	};
+
+	stream.getBufferedLength = () => length;
+
+	return stream;
+};
+
+
+/***/ }),
+
 /***/ 988:
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -16288,7 +16330,7 @@ exports.default = Request;
 const http = __webpack_require__(605);
 const https = __webpack_require__(211);
 const resolveALPN = __webpack_require__(524);
-const QuickLRU = __webpack_require__(904);
+const QuickLRU = __webpack_require__(290);
 const Http2ClientRequest = __webpack_require__(181);
 const calculateServerName = __webpack_require__(751);
 const urlToOptions = __webpack_require__(507);
