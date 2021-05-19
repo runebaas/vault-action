@@ -38,7 +38,7 @@ async function getSecrets(secretRequests, client) {
             try{
                 result = await client.get(requestPath);
             } catch (e) {
-                core.debug(`Failed to get Secret - ${e}`,);
+                core.info(`Failed to get Secret - ${e}`,);
             }
             body = result.body;
             responseCache.set(requestPath, body);

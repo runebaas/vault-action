@@ -82,16 +82,16 @@ async function getClientToken(client, method, payload) {
         responseType,
     };
 
-    core.debug(`Retrieving Vault Token from v1/auth/${method}/login endpoint`);
+    core.info(`Retrieving Vault Token from v1/auth/${method}/login endpoint`);
 
     /** @type {import('got').Response<VaultLoginResponse>} */
     const response = await client.post(`v1/auth/${method}/login`, options);
     if (response && response.body && response.body.auth && response.body.auth.client_token) {
-        core.debug('✔ Vault Token successfully retrieved');
+        core.info('✔ Vault Token successfully retrieved');
 
         core.startGroup('Token Info');
-        core.debug(`Operating under policies: ${JSON.stringify(response.body.auth.policies)}`);
-        core.debug(`Token Metadata: ${JSON.stringify(response.body.auth.metadata)}`);
+        core.info(`Operating under policies: ${JSON.stringify(response.body.auth.policies)}`);
+        core.info(`Token Metadata: ${JSON.stringify(response.body.auth.metadata)}`);
         core.endGroup();
 
         return response.body.auth.client_token;

@@ -1116,16 +1116,16 @@ async function getClientToken(client, method, payload) {
         responseType,
     };
 
-    core.debug(`Retrieving Vault Token from v1/auth/${method}/login endpoint`);
+    core.info(`Retrieving Vault Token from v1/auth/${method}/login endpoint`);
 
     /** @type {import('got').Response<VaultLoginResponse>} */
     const response = await client.post(`v1/auth/${method}/login`, options);
     if (response && response.body && response.body.auth && response.body.auth.client_token) {
-        core.debug('✔ Vault Token successfully retrieved');
+        core.info('✔ Vault Token successfully retrieved');
 
         core.startGroup('Token Info');
-        core.debug(`Operating under policies: ${JSON.stringify(response.body.auth.policies)}`);
-        core.debug(`Token Metadata: ${JSON.stringify(response.body.auth.metadata)}`);
+        core.info(`Operating under policies: ${JSON.stringify(response.body.auth.policies)}`);
+        core.info(`Token Metadata: ${JSON.stringify(response.body.auth.metadata)}`);
         core.endGroup();
 
         return response.body.auth.client_token;
@@ -11048,7 +11048,7 @@ async function getSecrets(secretRequests, client) {
             try{
                 result = await client.get(requestPath);
             } catch (e) {
-                core.debug(`Failed to get Secret - ${e}`,);
+                core.info(`Failed to get Secret - ${e}`,);
             }
             body = result.body;
             responseCache.set(requestPath, body);
@@ -14630,7 +14630,7 @@ async function exportSecrets() {
     for (const result of results) {
         const { value, request, cachedResponse } = result;
         if (cachedResponse) {
-            core.debug('ℹ using cached response');
+            core.info('ℹ using cached response');
         }
         for (const line of value.replace(/\r/g, '').split('\n')) {
             if (line.length > 0) {
@@ -14641,7 +14641,7 @@ async function exportSecrets() {
             core.exportVariable(request.envVarName, `${value}`);
         }
         core.setOutput(request.outputVarName, `${value}`);
-        core.debug(`✔ ${request.path} => outputs.${request.outputVarName}${exportEnv ? ` | env.${request.envVarName}` : ''}`);
+        core.info(`✔ ${request.path} => outputs.${request.outputVarName}${exportEnv ? ` | env.${request.envVarName}` : ''}`);
     }
 };
 

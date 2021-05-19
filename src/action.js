@@ -76,7 +76,7 @@ async function exportSecrets() {
     for (const result of results) {
         const { value, request, cachedResponse } = result;
         if (cachedResponse) {
-            core.debug('ℹ using cached response');
+            core.info('ℹ using cached response');
         }
         for (const line of value.replace(/\r/g, '').split('\n')) {
             if (line.length > 0) {
@@ -87,7 +87,7 @@ async function exportSecrets() {
             core.exportVariable(request.envVarName, `${value}`);
         }
         core.setOutput(request.outputVarName, `${value}`);
-        core.debug(`✔ ${request.path} => outputs.${request.outputVarName}${exportEnv ? ` | env.${request.envVarName}` : ''}`);
+        core.info(`✔ ${request.path} => outputs.${request.outputVarName}${exportEnv ? ` | env.${request.envVarName}` : ''}`);
     }
 };
 
