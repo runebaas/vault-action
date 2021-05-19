@@ -11048,7 +11048,8 @@ async function getSecrets(secretRequests, client) {
             try{
                 result = await client.get(requestPath);
             } catch (e) {
-                core.info(`Failed to get Secret - ${e}`,);
+                core.info(e.response.body);
+                throw e;
             }
             body = result.body;
             responseCache.set(requestPath, body);
