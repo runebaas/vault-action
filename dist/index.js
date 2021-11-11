@@ -1326,16 +1326,16 @@ async function getClientToken(client, method, path, payload) {
         responseType,
     };
 
-    core.debug(`Retrieving Vault Token from v1/auth/${path}/login endpoint`);
+    core.info(`Retrieving Vault Token from v1/auth/${path}/login endpoint`);
 
     /** @type {import('got').Response<VaultLoginResponse>} */
     const response = await client.post(`v1/auth/${path}/login`, options);
     if (response && response.body && response.body.auth && response.body.auth.client_token) {
-        core.debug('✔ Vault Token successfully retrieved');
+        core.info('✔ Vault Token successfully retrieved');
 
         core.startGroup('Token Info');
-        core.debug(`Operating under policies: ${JSON.stringify(response.body.auth.policies)}`);
-        core.debug(`Token Metadata: ${JSON.stringify(response.body.auth.metadata)}`);
+        core.info(`Operating under policies: ${JSON.stringify(response.body.auth.policies)}`);
+        core.info(`Token Metadata: ${JSON.stringify(response.body.auth.metadata)}`);
         core.endGroup();
 
         return response.body.auth.client_token;
@@ -11195,7 +11195,7 @@ exports.default = (body) => is_1.default.nodeStream(body) && is_1.default.functi
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
 const jsonata = __webpack_require__(350);
-
+const core = __webpack_require__(470);
 
 /**
  * @typedef {Object} SecretRequest
@@ -11230,7 +11230,13 @@ async function getSecrets(secretRequests, client) {
             body = responseCache.get(requestPath);
             cachedResponse = true;
         } else {
-            const result = await client.get(requestPath);
+            let result
+            try{
+                result = await client.get(requestPath);
+            } catch (e) {
+                core.info(e.response.body);
+                throw e;
+            }
             body = result.body;
             responseCache.set(requestPath, body);
         }
@@ -11255,8 +11261,8 @@ async function getSecrets(secretRequests, client) {
 
 /**
  * Uses a Jsonata selector retrieve a bit of data from the result
- * @param {object} data 
- * @param {string} selector 
+ * @param {object} data
+ * @param {string} selector
  */
 function selectData(data, selector) {
     const ata = jsonata(selector);
@@ -11278,6 +11284,7 @@ module.exports = {
     getSecrets,
     selectData
 }
+
 
 /***/ }),
 
@@ -15706,7 +15713,7 @@ async function exportSecrets() {
     for (const result of results) {
         const { value, request, cachedResponse } = result;
         if (cachedResponse) {
-            core.debug('ℹ using cached response');
+            core.info('ℹ using cached response');
         }
         for (const line of value.replace(/\r/g, '').split('\n')) {
             if (line.length > 0) {
@@ -15717,7 +15724,7 @@ async function exportSecrets() {
             core.exportVariable(request.envVarName, `${value}`);
         }
         core.setOutput(request.outputVarName, `${value}`);
-        core.debug(`✔ ${request.path} => outputs.${request.outputVarName}${exportEnv ? ` | env.${request.envVarName}` : ''}`);
+        core.info(`✔ ${request.path} => outputs.${request.outputVarName}${exportEnv ? ` | env.${request.envVarName}` : ''}`);
     }
 };
 
