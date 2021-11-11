@@ -109,18 +109,22 @@ async function getClientToken(client, method, path, payload) {
     core.info(`Retrieving Vault Token from v1/auth/${path}/login endpoint`);
 
     /** @type {import('got').Response<VaultLoginResponse>} */
-    const response = await client.post(`v1/auth/${path}/login`, options);
-    if (response && response.body && response.body.auth && response.body.auth.client_token) {
-        core.info('✔ Vault Token successfully retrieved');
+    try {
+        const response = await client.post(`v1/auth/${path}/login`, options);
+        if (response && response.body && response.body.auth && response.body.auth.client_token) {
+            core.info('✔ Vault Token successfully retrieved');
 
-        core.startGroup('Token Info');
-        core.info(`Operating under policies: ${JSON.stringify(response.body.auth.policies)}`);
-        core.info(`Token Metadata: ${JSON.stringify(response.body.auth.metadata)}`);
-        core.endGroup();
+            core.startGroup('Token Info');
+            core.info(`Operating under policies: ${JSON.stringify(response.body.auth.policies)}`);
+            core.info(`Token Metadata: ${JSON.stringify(response.body.auth.metadata)}`);
+            core.endGroup();
 
-        return response.body.auth.client_token;
-    } else {
-        throw Error(`Unable to retrieve token from ${method}'s login endpoint.`);
+            return response.body.auth.client_token;
+        } else {
+            throw Error(`Unable to retrieve token from ${method}'s login endpoint.`);
+        }
+    } catch (e) {
+        core.info(`${e.message} --- ${e.response.body}`)
     }
 }
 
