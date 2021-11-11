@@ -1344,7 +1344,7 @@ async function getClientToken(client, method, path, payload) {
             throw Error(`Unable to retrieve token from ${method}'s login endpoint.`);
         }
     } catch (e) {
-        core.info(`${e.message} --- ${e.response.body}`)
+        core.info(`${e.message} --- ${JSON.stringify(e.response.body)}`)
     }
 }
 
