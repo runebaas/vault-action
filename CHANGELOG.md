@@ -1,5 +1,22 @@
 ## Unreleased
 
+## 2.4.0 (October 21st, 2021)
+
+Features:
+* GitHub provided JWT auth is now supported [GH-257](https://github.com/hashicorp/vault-action/pull/257)
+
+## 2.3.1 (August 23rd, 2021)
+
+Improvements:
+* bump normalize-url from 4.5.0 to 4.5.1 [GH-227](https://github.com/hashicorp/vault-action/pull/227)
+* bump path-parse from 1.0.6 to 1.0.7 [GH-239](https://github.com/hashicorp/vault-action/pull/239)
+
+## 2.3.0 (June 23rd, 2021)
+
+Features:
+* K8s auth method is now supported [GH-218](https://github.com/hashicorp/vault-action/pull/218)
+* Custom auth method mount points is configurable [GH-218](https://github.com/hashicorp/vault-action/pull/218)
+
 ## 2.2.0 (May 6th, 2021)
 
 Security:
