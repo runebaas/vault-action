@@ -34,15 +34,18 @@ async function getSecrets(secretRequests, client) {
             body = responseCache.get(requestPath);
             cachedResponse = true;
         } else {
-            let result
-            try{
-                result = await client.get(requestPath);
-            } catch (e) {
-                core.info(e.response.body);
-                throw e;
+            try {
+                const result = await client.get(requestPath);
+                body = result.body;
+                responseCache.set(requestPath, body);
+            } catch (error) {
+                const {response} = error;
+                core.info(response.body)
+                if (response.statusCode === 404) {
+                    throw Error(`Unable to retrieve result for "${path}" because it was not found: ${response.body.trim()}`)
+                }
+                throw error
             }
-            body = result.body;
-            responseCache.set(requestPath, body);
         }
         if (!selector.match(/.*[\.].*/)) {
             selector = '"' + selector + '"'
